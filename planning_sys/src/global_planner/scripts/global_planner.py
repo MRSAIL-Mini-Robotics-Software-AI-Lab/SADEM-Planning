@@ -20,11 +20,16 @@ class ExploratoryPlanner:
     ODOM_TOPIC = '/state_estimation'
     GOAL_TOPIC = '/way_point'
     OCCUPANCY_TOPIC = '/occupancy_grid'
-    GRID_RESOLUTION = .5
+    GRID_RESOLUTION = .3
     DEFAULT_HEIGHT = 0.0
-    UNEXPLORED = 50
-    OCCUPIED = 100
-    FREE = 0
+    MIN_HEIGHT = 0.7
+    MAX_HEIGHT = 1
+
+    class GridState:
+        UNEXPLORED = -1
+        FREE = 0
+        VISITED = 50
+        OCCUPIED = 100
 
     def __init__(self):
         rospy.init_node('exploratory_planner', anonymous=True)
@@ -40,6 +45,8 @@ class ExploratoryPlanner:
         self.map = None
         self.odom = None
         self.grid = None
+        self.position_in_grid = None
+        self.orientation_in_grid = None
         self.path = []
 
         self.rate = rospy.Rate(5)
@@ -85,41 +92,7 @@ class ExploratoryPlanner:
         if self.grid is None:
             rospy.logwarn('No occupancy grid received')
             return
-        # Calculate the center of the grid
-        center_x = self.grid.info.width // 2
-        center_y = self.grid.info.height // 2
-
-        # get current position
-        current_x = self.odom.pose.pose.position.x
-        current_y = self.odom.pose.pose.position.y
-
-        # Define the maximum exploration distance from the center
-        # max_distance = min(self.grid.info.width, self.grid.info.height) // 64
-        max_distance = 6
-
-        # Explore in a spiral pattern starting from the center
-        for distance in range(max_distance):
-            # Explore in a square around the current position
-            for dx in range(-distance, distance + 1):
-                for dy in range(-distance, distance + 1):
-                    x = center_x + dx
-                    y = center_y + dy
-
-                    # Check if the grid cell is within the valid range
-                    if 0 <= x < self.grid.info.width and 0 <= y < self.grid.info.height:
-                        # Check if the grid cell is unoccupied
-                        if self.grid.data[y * self.grid.info.width + x] == 0:
-                            self.path.append(
-                                (self.grid.info.origin.position.x + x * self.grid.info.resolution,
-                                self.grid.info.origin.position.y + y * self.grid.info.resolution)
-                            )
-                            return
-
-        # If no unoccupied cell is found, return the center as the goal position
-        self.path.append (
-            (self.grid.info.origin.position.x + center_x * self.grid.info.resolution,
-            self.grid.info.origin.position.y + center_y * self.grid.info.resolution)
-        )
+        pass
 
     def _get_region_around_robot(self, radius, grid_pos):
         ''' Returns a set of coordinates around the robot'''
@@ -149,38 +122,45 @@ class ExploratoryPlanner:
         # determine the min and max x and y values for the grid size
         for point in point_cloud2.read_points(self.map): 
             # only get points close to 0.9m and 1.1m in z
-            if point[2] > 1.1 and point[2] < 1.3:
+            if point[2] > self.MIN_HEIGHT and point[2] < self.MAX_HEIGHT:
                 x,y = point[:2]
                 min_x = min(min_x, x)
                 min_y = min(min_y, y)
                 max_x = max(max_x, x)
                 max_y = max(max_y, y)
-                max_z = max(max_z, point[2])
-                min_z = min(min_z, point[2])
+                # max_z = max(max_z, point[2])
+                # min_z = min(min_z, point[2])
 
-        print('min max',min_z, max_z)
+        # print('min max',min_z, max_z)
         # calculate the grid size
         grid_width = int((max_x - min_x) / self.GRID_RESOLUTION)+1
         grid_height = int((max_y - min_y) / self.GRID_RESOLUTION)+1
 
         # create occupanvy grid with all zeros
-        grid = np.zeros((grid_height, grid_width))
+        grid = np.zeros((grid_height, grid_width))+self.GridState.UNEXPLORED
 
         # populate the grid with the map data
         for point in point_cloud2.read_points(self.map):
-            if point[2] > 1.1 and point[2] < 1.3:
+            if point[2] > self.MIN_HEIGHT and point[2] < self.MAX_HEIGHT:
                 px,py = point[:2]
                 # convert the points to coordinates on the grid
                 x = int((px - min_x) / self.GRID_RESOLUTION)
                 y = int((py - min_y) / self.GRID_RESOLUTION)
 
                 # set the grid value to 100 (occupied)
-                grid[y][x] = 100
+                grid[y][x] = self.GridState.OCCUPIED
 
         # get position on grid
         x = int((self.odom.pose.pose.position.x - min_x) / self.GRID_RESOLUTION)
         y = int((self.odom.pose.pose.position.y - min_y) / self.GRID_RESOLUTION)
-        print(grid.shape)
+        # print(grid.shape)
+
+        # set current position on grid to visited
+        grid[y][x] = self.GridState.VISITED
+        grid[y+1][x] = self.GridState.VISITED
+        grid[y-1][x] = self.GridState.VISITED
+        grid[y][x+1] = self.GridState.VISITED
+        grid[y][x-1] = self.GridState.VISITED
 
         # get the 2d orientation
         orientation = self.odom.pose.pose.orientation
@@ -194,16 +174,18 @@ class ExploratoryPlanner:
     def _publish_grid(self):
         # get the grid
         res = self._get_grid()
+        self.position_in_grid = res['position']
+        self.orientation_in_grid = res['orientation']
 
         # create occupancy grid message
         grid_msg = OccupancyGrid()
         grid_msg.info.resolution = self.GRID_RESOLUTION
         grid_msg.info.width = res['data'].shape[1]
         grid_msg.info.height = res['data'].shape[0]
-        grid_msg.info.origin.position.x = res['position'][0]
-        grid_msg.info.origin.position.y = res['position'][1]
-        grid_msg.info.origin.position.z = self.DEFAULT_HEIGHT
-        grid_msg.info.origin.orientation.z = res['orientation']
+        grid_msg.info.origin.position.x = 0
+        grid_msg.info.origin.position.y = 0
+        grid_msg.info.origin.position.z = 0
+        # grid_msg.info.origin.orientation.w = 1
         grid_msg.data = res['data'].flatten().astype(int).tolist()
 
         # publish the grid
