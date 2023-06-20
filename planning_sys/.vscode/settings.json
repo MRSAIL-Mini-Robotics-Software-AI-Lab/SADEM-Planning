@@ -5,5 +5,9 @@
     "python.analysis.extraPaths": [
         "/opt/ros/noetic/lib/python3/dist-packages"
     ],
-    "cmake.sourceDirectory": "/home/ahmedsalah/Desktop/work/projects/gp/planning/SADEM-Planning/planning_sys/src/global_planner"
+    "cmake.sourceDirectory": "/home/ahmedsalah/Desktop/work/projects/gp/planning/SADEM-Planning/planning_sys/src/global_planner",
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter"
+    },
+    "python.formatting.provider": "none"
 }
