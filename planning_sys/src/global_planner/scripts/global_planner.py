@@ -172,7 +172,7 @@ class ExploratoryPlanner:
         # else -> set all of the cells before that point to FREE
 
         # get the region around the robot
-        self.grid_mat[y][x] = self.GridState.VISITED
+        # self.grid_mat[y][x] = self.GridState.VISITED
         orientation = self.odom.pose.pose.orientation
         print(self.grid_mat)
         print(self.grid_mat.shape)
@@ -191,7 +191,7 @@ class ExploratoryPlanner:
 
         # get the coordinates of the region around the robot
         region = set()
-        for degs in range(-60, 60, 10):
+        for degs in range(-60, 60, 5):
             for r in range(1,radius+1):
                 x = grid_pos[0] + r * np.cos(current_yaw + np.radians(degs))
                 y = grid_pos[1] + r * np.sin(current_yaw + np.radians(degs))
