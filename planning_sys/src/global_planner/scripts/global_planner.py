@@ -15,6 +15,35 @@ from geometry_msgs.msg import PointStamped
 
 from tf.transformations import euler_from_quaternion, quaternion_from_euler
 
+def bresenham(x0, y0, x1, y1):
+    ''' Bresenham's line algorithm '''
+    points = []
+    dx = abs(x1 - x0)
+    dy = abs(y1 - y0)
+    x, y = x0, y0
+    sx = -1 if x0 > x1 else 1
+    sy = -1 if y0 > y1 else 1
+    if dx > dy:
+        err = dx / 2.0
+        while x != x1:
+            points.append((x, y))
+            err -= dy
+            if err < 0:
+                y += sy
+                err += dx
+            x += sx
+    else:
+        err = dy / 2.0
+        while y != y1:
+            points.append((x, y))
+            err -= dx
+            if err < 0:
+                x += sx
+                err += dy
+            y += sy
+    points.append((x, y))
+    return points
+
 class ExploratoryPlanner:
     # MAP_TOPIC = '/registered_scan'
     MAP_TOPIC = '/explored_areas'
@@ -134,6 +163,15 @@ class ExploratoryPlanner:
         # get position on grid
         x = int((self.odom.pose.pose.position.x - self.grid_map_origin[0]) / self.GRID_RESOLUTION)+self.grid_origin[0]
         y = int((self.odom.pose.pose.position.y - self.grid_map_origin[1]) / self.GRID_RESOLUTION)+self.grid_origin[0]
+        
+        region_around_robot = self._get_region_around_robot(50, (x,y))
+        self._set_free_space(region_around_robot, (x,y))
+
+        # create a line from the current position and orinetation to that point
+        # if there is an obstacle before that point -> set all of the cells before that obstacle to FREE
+        # else -> set all of the cells before that point to FREE
+
+        # get the region around the robot
         self.grid_mat[y][x] = self.GridState.VISITED
         orientation = self.odom.pose.pose.orientation
         print(self.grid_mat)
@@ -143,63 +181,47 @@ class ExploratoryPlanner:
             'position': (x, y),
             'orientation': euler_from_quaternion([orientation.x, orientation.y, orientation.z, orientation.w])[2]
         }
-
-    # def _get_grid(self):
-    #     self.grid_origin = self._get_grid_origin()
-    #     # get map data
-    #     min_x = min_y = 0
-    #     max_x = max_y = 0
-    #     max_z = float('-inf')
-    #     min_z = float('inf')
-    #     # determine the min and max x and y values for the grid size
-    #     for point in point_cloud2.read_points(self.map): 
-    #         # only get points close to 0.9m and 1.1m in z
-    #         # print(point)
-    #         if point[2] > self.MIN_HEIGHT and point[2] < self.MAX_HEIGHT:
-    #             # print(point[2])
-    #             x,y = point[:2]
-    #             min_x = min(min_x, x)
-    #             min_y = min(min_y, y)
-    #             max_x = max(max_x, x)
-    #             max_y = max(max_y, y)
-
-    #     # print('min max',min_z, max_z)
-    #     # calculate the grid size
-    #     grid_width = int((max_x - min_x) / self.GRID_RESOLUTION)+1
-    #     grid_height = int((max_y - min_y) / self.GRID_RESOLUTION)+1
-
-    #     # create occupanvy grid with all zeros
-    #     grid = np.zeros((grid_height, grid_width))+self.GridState.UNEXPLORED
-
-    #     # populate the grid with the map data
-    #     for point in point_cloud2.read_points(self.map):
-    #         if point[2] > self.MIN_HEIGHT and point[2] < self.MAX_HEIGHT:
-    #             px,py = point[:2]
-    #             # convert the points to coordinates on the grid
-    #             x = int((px - min_x) / self.GRID_RESOLUTION)
-    #             y = int((py - min_y) / self.GRID_RESOLUTION)
-
-    #             # set the grid value to 100 (occupied)
-    #             grid[y][x] = self.GridState.OCCUPIED
-
-    #     # get position on grid
-    #     x = int((self.odom.pose.pose.position.x - min_x) / self.GRID_RESOLUTION)
-    #     y = int((self.odom.pose.pose.position.y - min_y) / self.GRID_RESOLUTION)
-    #     print(grid)
-    #     print(grid.shape)
-
-    #     # set current position on grid to visited
-    #     grid[y][x] = self.GridState.VISITED
-
-    #     # get the 2d orientation
-    #     orientation = self.odom.pose.pose.orientation
-
-    #     return {
-    #         'data': grid,
-    #         'position': (x, y),
-    #         'orientation': euler_from_quaternion([orientation.x, orientation.y, orientation.z, orientation.w])[2]
-    #     }
     
+    def _get_region_around_robot(self, radius, grid_pos):
+        ''' Returns a set of coordinates around the robot'''
+        # get current orientation
+        orientation_q = self.odom.pose.pose.orientation
+        orientation_list = [orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w]
+        _, _, current_yaw = euler_from_quaternion(orientation_list)
+
+        # get the coordinates of the region around the robot
+        region = set()
+        for degs in range(-60, 60, 10):
+            for r in range(1,radius+1):
+                x = grid_pos[0] + r * np.cos(current_yaw + np.radians(degs))
+                y = grid_pos[1] + r * np.sin(current_yaw + np.radians(degs))
+                region.add((int(x),int(y)))
+
+        return region
+    
+    def _set_free_space(self, region_around_robot, grid_pos):
+        '''Sets the free position on the grid'''
+        # loop over the region around the robot
+        # loop over the grid position linearly till the line between the robot and the grid position
+        # if there is an obstacle -> set all of the cells before that obstacle to FREE
+        # else -> set all of the cells before that point to FREE
+        for x,y in region_around_robot:
+            # get the radial angle between the current position and the point
+
+            # get the line from the current position to the point
+            line = bresenham(grid_pos[0], grid_pos[1], x, y)
+
+            # loop over the line
+            for i in range(len(line)):
+                # get the current cell
+                cell = line[i]
+                # check if the cell is occupied
+                if self.grid_mat[cell[1]][cell[0]] == self.GridState.OCCUPIED:
+                    break
+                else:
+                    # set the cell to FREE
+                    self.grid_mat[cell[1]][cell[0]] = self.GridState.FREE
+
     def _publish_grid(self):
         # get the grid
         res = self._get_grid()
