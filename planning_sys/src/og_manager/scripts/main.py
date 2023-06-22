@@ -49,7 +49,6 @@ class GridManager:
     # MAP_TOPIC = '/registered_scan'
     MAP_TOPIC = '/explored_areas'
     ODOM_TOPIC = '/state_estimation'
-    GOAL_TOPIC = '/way_point'
     OCCUPANCY_TOPIC = '/occupancy_grid'
     GRID_RESOLUTION = .3
     DEFAULT_HEIGHT = 0.0
